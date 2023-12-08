@@ -1,0 +1,26 @@
+const AWS = require("aws-sdk");
+const IotData = new AWS.IotData({endpoint:"a1srjk70y6ht4r-ats.iot.us-east-2.amazonaws.com"});
+
+exports.handler = (event) => {
+  var watering_state=event.watering;
+  var topic=event.topic
+  
+  const wateringParams = {
+  topic:topic,
+  payload: JSON.stringify({
+    state: {
+      reported: {
+        watering: watering_state
+      }
+    }
+  }),
+  qos: 0
+};
+
+
+IotData.publish(wateringParams, function(err, data) {
+    if (err) console.log(err);
+  });
+  console.log("Mensaje Recibido:", JSON.stringify(event));
+};
+

@@ -1,0 +1,204 @@
+const Alexa = require("ask-sdk-core");
+const AWS = require("aws-sdk");
+const IotData = new AWS.IotData({endpoint:"a1srjk70y6ht4r-ats.iot.us-east-2.amazonaws.com"});
+
+const userList=require('./data.json');
+var selectedUser=userList.usuarios[0];
+let deviceName;
+
+var ShadowParams = {
+    thingName: deviceName,
+};
+
+const wateringParams = {
+  topic: "$aws/things/"+deviceName+"/shadow/update",
+  payload: JSON.stringify({
+    state: {
+      reported: {
+        watering: "Yes"
+      }
+    }
+  }),
+  qos: 0
+};
+
+function getShadowPromise(params) {
+    return new Promise((resolve, reject) => {
+        IotData.getThingShadow(params, (err, data) => {
+            if (err) {
+                console.log(err, err.stack);
+                reject('Failed to get thing shadow ${err.errorMessage}');
+            } else {
+                resolve(JSON.parse(data.payload));
+            }
+        });
+    });
+}
+
+const LaunchRequestHandler = {
+  canHandle(handlerInput) {
+    return handlerInput.requestEnvelope.request.type === "LaunchRequest";
+  },
+  handle(handlerInput) {
+    const speechText = "Bienvenido a Riego Planta, ¿con qué planta quieres trabajar?";
+    return handlerInput.responseBuilder
+            .speak(speechText)
+            .reprompt(speechText) 
+            .getResponse();
+  }
+};
+
+const IdentifyPlantIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'IdentifyPlantIntent';
+    },
+    handle(handlerInput) {
+        const plantSpoken = Alexa.getSlotValue(handlerInput.requestEnvelope, 'plantaSlot');
+        var speakOutput="";
+        if(plantSpoken!==undefined){
+            const userId = Alexa.getUserId(handlerInput.requestEnvelope);
+            selectedUser=userList.usuarios.find((usuario)=>usuario.id==userId);
+            var selectedPlant=selectedUser.plantas.find(plant=>plant.name===plantSpoken);
+            
+            deviceName = selectedPlant.device;
+
+            speakOutput="Se seleccionó la planta: "+ selectedPlant.name +" con el dispositivo: "+ selectedPlant.device 
+                        +". Puedes consultar el estado de la planta, su humedad o regar la planta";
+        }
+        else{
+            speakOutput="Lo siento, no encuentro la planta a la que te refieres";
+        }
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+  }
+};
+
+const QueryIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'QueryIntent';
+    },
+    async handle(handlerInput) {
+        var humidity = 'unknown';
+        ShadowParams.thingName = deviceName;
+        await getShadowPromise(ShadowParams)
+          .then((result) => humidity = result.state.reported.humidity);
+        console.log(humidity);
+        humidity=parseInt(humidity, 10);
+        var speakOutput = 'Error';
+        if (humidity>=80) {
+            speakOutput = 'La planta está demasiado húmeda';
+        } else if (humidity<30) {
+            speakOutput = 'La planta está seca';
+        } else if (humidity<80&&humidity>=30) {
+            speakOutput = 'La planta está húmeda';
+        } else {
+            speakOutput = 'No se pudo consultar el estado de la planta, inténtelo más tarde';
+        }
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+  }
+};
+
+const HumidityIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'HumidityIntent';
+    },
+    async handle(handlerInput) {
+        var humidity = 'unknown';
+        ShadowParams.thingName = deviceName;
+        await getShadowPromise(ShadowParams)
+          .then((result) => humidity = result.state.reported.humidity);
+        console.log(humidity);
+        var speakOutput = 'Error';
+        if (humidity!='unknown') {
+            speakOutput = 'La humedad de la planta es: '+ humidity;
+        } else {
+            speakOutput = 'No se pudo consultar la humedad de la planta, inténtelo más tarde';
+        }
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+  }
+};
+
+const WateringIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'WateringIntent';
+    },
+    handle(handlerInput) {
+        var speakOutput = 'Error';
+        wateringParams.topic = "$aws/things/" + deviceName + "/shadow/update";
+        IotData.publish(wateringParams, function(err, data) {
+            if (err) console.log(err);
+        });
+        speakOutput = 'Regando';
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+  }
+};
+
+const HelpIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.HelpIntent';
+    },
+    handle(handlerInput) {
+        const speakOutput = 'Tienes las opciones de regar planta, estado de la planta, humedad de la planta.'
+                            + 'Puedes escoger las plantas "sala", "sala 2" ó  "cocina';
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const CancelAndStopIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && (Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.CancelIntent'
+                || Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.StopIntent');
+    },
+    handle(handlerInput) {
+        const speakOutput = 'Gracias por usar Sistema Riego!';
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .getResponse();
+    }
+};
+
+const FallbackIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.FallbackIntent';
+    },
+    handle(handlerInput) {
+        const speakOutput = 'Intenta de nuevo.';
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+exports.handler = Alexa.SkillBuilders.custom()
+  .addRequestHandlers(LaunchRequestHandler,
+                      IdentifyPlantIntentHandler,
+                      QueryIntentHandler,
+                      HumidityIntentHandler,
+                      WateringIntentHandler,
+                      HelpIntentHandler,
+                      CancelAndStopIntentHandler,
+                      FallbackIntentHandler
+                      )
+  .lambda();
